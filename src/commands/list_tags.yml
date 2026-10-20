@@ -1,0 +1,40 @@
+description: >
+  Lists the tags of a repository with skopeo list-tags. Prints them, and can
+  write them to a file, one per line, for later steps to search, such as with
+  grep -qx.
+parameters:
+  repository:
+    type: string
+    description: >
+      Repository to list, with its transport and without a tag, such as
+      docker://ghcr.io/myorg/myapp. Environment variables are expanded.
+  tls_verify:
+    type: boolean
+    default: true
+    description: >
+      Require HTTPS with a certificate that verifies. Set it to false only for
+      a registry without TLS, such as one on localhost.
+  tags_file:
+    type: string
+    default: ""
+    description: >
+      Also write the tags to this file, one per line, such as tags.txt. The
+      directory is created if needed. Environment variables and a leading ~/
+      are expanded. Needs a docker:// repository: for an archive, skopeo
+      lists references, not tags.
+  extra_args:
+    type: string
+    default: ""
+    description: >
+      More arguments for skopeo list-tags, split like shell words. Nothing in
+      them is run as shell code.
+steps:
+  - run:
+      name: skopeo List Tags
+      environment:
+        PARAM_EXTRA_ARGS: << parameters.extra_args >>
+        PARAM_REPOSITORY: << parameters.repository >>
+        PARAM_TAGS_FILE: << parameters.tags_file >>
+        PARAM_TLS_VERIFY: << parameters.tls_verify >>
+        SCRIPT_SKOPEO_LIB: << include(scripts/lib/skopeo.sh) >>
+      command: << include(scripts/list_tags.sh) >>

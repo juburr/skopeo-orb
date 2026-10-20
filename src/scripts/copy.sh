@@ -49,13 +49,9 @@ for word in ${EXTRA_ARG_LIST[@]+"${EXTRA_ARG_LIST[@]}"}; do
 done
 skopeo_require
 
-# policy_found: succeeds if skopeo has a signature policy to load: one named
-# by CONTAINERS_POLICY_JSON or in any place skopeo looks for policy.json.
+# policy_found: succeeds if there is a policy.json where skopeo looks for one.
 policy_found() {
     local file
-    if [[ -n "${CONTAINERS_POLICY_JSON:-}" ]]; then
-        return 0
-    fi
     for file in "${XDG_CONFIG_HOME:-${HOME:-/nonexistent}/.config}/containers/policy.json" \
         "${HOME:-/nonexistent}/.config/containers/policy.json" \
         /etc/containers/policy.json /usr/share/containers/policy.json; do
@@ -75,17 +71,18 @@ if [[ "${POLICY_GIVEN}" == true ]]; then
 fi
 
 COPY_ARGS=(copy --multi-arch "${MULTI_ARCH}" --digestfile "${DIGEST_FILE}")
-if [[ "${POLICY_GIVEN}" == false ]] && ! policy_found; then
+if [[ "${POLICY_GIVEN}" == false && -n "${CONTAINERS_POLICY_JSON:-}" ]]; then
+    # Only newer releases read CONTAINERS_POLICY_JSON themselves.
+    COPY_ARGS+=(--policy "${CONTAINERS_POLICY_JSON}")
+    POLICY_NOTE="${CONTAINERS_POLICY_JSON} (CONTAINERS_POLICY_JSON)"
+elif [[ "${POLICY_GIVEN}" == false ]] && ! policy_found; then
     printf '{"default":[{"type":"insecureAcceptAnything"}]}\n' > "${WORK_DIR}/policy.json"
     COPY_ARGS+=(--policy "${WORK_DIR}/policy.json")
     POLICY_NOTE="none on this executor, so any image is accepted, as with containers-common's default policy.json"
 fi
-if [[ "${SRC_TLS_VERIFY}" == false ]]; then
-    COPY_ARGS+=(--src-tls-verify=false)
-fi
-if [[ "${DEST_TLS_VERIFY}" == false ]]; then
-    COPY_ARGS+=(--dest-tls-verify=false)
-fi
+# Both settings are passed even when true, so a registries.conf that marks a
+# registry insecure can't relax them.
+COPY_ARGS+=(--src-tls-verify="${SRC_TLS_VERIFY}" --dest-tls-verify="${DEST_TLS_VERIFY}")
 # The array can be empty, and bash before 4.4 treats an empty array as unset
 # under set -u, so it is expanded only when it has elements.
 COPY_ARGS+=(${EXTRA_ARG_LIST[@]+"${EXTRA_ARG_LIST[@]}"})

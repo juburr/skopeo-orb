@@ -53,8 +53,8 @@ parameters:
       is run as shell code. --preserve-digests, for one, fails the step
       instead of writing the image with a different digest, which older
       skopeo releases can do to a multi-platform index. --policy <file>
-      sets the signature policy. --digestfile is refused, since copy sets
-      it.
+      sets the signature policy, as does a CONTAINERS_POLICY_JSON
+      environment variable. --digestfile is refused, since copy sets it.
   digest_env_var:
     type: env_var_name
     default: SKOPEO_DIGEST

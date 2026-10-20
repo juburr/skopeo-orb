@@ -177,16 +177,19 @@ SOURCE="docker://ghcr.io/myorg/app:1.0.0"
 DESTINATION="docker://registry.example:5000/app:1.0.0"
 
 # --- copy
-# CONTAINERS_POLICY_JSON names a policy, so these runs don't depend on
-# whether this machine has one.
+# HOME has a policy.json, so these runs don't depend on whether this machine
+# has one.
+mkdir -p "${WORK}/home/.config/containers"
+cp "${WORK}/policy.json" "${WORK}/home/.config/containers/policy.json"
 DEFAULTS=(PARAM_SOURCE="${SOURCE}" PARAM_DESTINATION="${DESTINATION}" PARAM_MULTI_ARCH="all"
-    PARAM_SRC_TLS_VERIFY="1" PARAM_DEST_TLS_VERIFY="1" PARAM_EXTRA_ARGS="" PARAM_DIGEST_ENV_VAR="SKOPEO_DIGEST"
-    CONTAINERS_POLICY_JSON="${WORK}/policy.json")
+    PARAM_SRC_TLS_VERIFY="1" PARAM_DEST_TLS_VERIFY="1" PARAM_EXTRA_ARGS="" PARAM_DIGEST_ENV_VAR="SKOPEO_DIGEST")
 
 run copy.sh
 check "copy succeeds" rc_is_zero
-check "copy copies every platform and asks for the digest, with no optional flags" \
-    call_is 1 copy --multi-arch all --digestfile "<digestfile>" -- "${SOURCE}" "${DESTINATION}"
+check "copy copies every platform, asks for the digest and requires TLS on both sides" \
+    call_is 1 copy --multi-arch all --digestfile "<digestfile>" --src-tls-verify=true --dest-tls-verify=true \
+    -- "${SOURCE}" "${DESTINATION}"
+check "copy uses the policy.json in HOME" output_has "Signature policy: the executor's policy.json"
 check "copy exports the digest skopeo wrote" exported SKOPEO_DIGEST "${DIGEST}"
 
 run copy.sh PARAM_MULTI_ARCH="system" PARAM_SRC_TLS_VERIFY="0" PARAM_DEST_TLS_VERIFY="0" \
@@ -202,32 +205,37 @@ check "copy refuses --digestfile in extra_args" rc_is_nonzero
 check "copy says it writes the digest itself" output_has "ERROR: extra_args can't set --digestfile"
 check "copy does not run skopeo with --digestfile in extra_args" skopeo_not_run
 
-run copy.sh PARAM_EXTRA_ARGS="--policy /etc/custom-policy.json" CONTAINERS_POLICY_JSON=""
+run copy.sh PARAM_EXTRA_ARGS="--policy /etc/custom-policy.json" CONTAINERS_POLICY_JSON="${WORK}/env-policy.json"
 check "copy leaves a --policy in extra_args to skopeo" \
-    call_is 1 copy --multi-arch all --digestfile "<digestfile>" --policy /etc/custom-policy.json -- "${SOURCE}" "${DESTINATION}"
+    call_is 1 copy --multi-arch all --digestfile "<digestfile>" --src-tls-verify=true --dest-tls-verify=true \
+    --policy /etc/custom-policy.json -- "${SOURCE}" "${DESTINATION}"
 check "copy says the policy comes from extra_args" output_has "Signature policy: from extra_args"
 
-run copy.sh PARAM_EXTRA_ARGS="--insecure-policy" CONTAINERS_POLICY_JSON=""
+run copy.sh PARAM_EXTRA_ARGS="--insecure-policy"
 check "copy adds no policy to --insecure-policy" \
-    call_is 1 copy --multi-arch all --digestfile "<digestfile>" --insecure-policy -- "${SOURCE}" "${DESTINATION}"
+    call_is 1 copy --multi-arch all --digestfile "<digestfile>" --src-tls-verify=true --dest-tls-verify=true \
+    --insecure-policy -- "${SOURCE}" "${DESTINATION}"
 
-mkdir -p "${WORK}/home/.config/containers"
-cp "${WORK}/policy.json" "${WORK}/home/.config/containers/policy.json"
-run copy.sh CONTAINERS_POLICY_JSON=""
-check "copy uses a policy.json in HOME" \
-    call_is 1 copy --multi-arch all --digestfile "<digestfile>" -- "${SOURCE}" "${DESTINATION}"
+# Older releases, such as 1.14.0, don't read CONTAINERS_POLICY_JSON, so copy passes it.
+run copy.sh CONTAINERS_POLICY_JSON="${WORK}/env-policy.json"
+check "copy passes CONTAINERS_POLICY_JSON as --policy" \
+    call_is 1 copy --multi-arch all --digestfile "<digestfile>" --policy "${WORK}/env-policy.json" \
+    --src-tls-verify=true --dest-tls-verify=true -- "${SOURCE}" "${DESTINATION}"
+check "copy says the policy comes from CONTAINERS_POLICY_JSON" output_has "(CONTAINERS_POLICY_JSON)"
+
 rm -f "${WORK}/home/.config/containers/policy.json"
-
 if [[ -e /etc/containers/policy.json || -e /usr/share/containers/policy.json ]]; then
     echo "skip: this machine has a system policy.json, so the copy without one was not checked"
 else
-    run copy.sh CONTAINERS_POLICY_JSON=""
+    run copy.sh
     check "copy without a policy succeeds" rc_is_zero
     check "copy without a policy gives skopeo one" \
-        call_is 1 copy --multi-arch all --digestfile "<digestfile>" --policy "<policy>" -- "${SOURCE}" "${DESTINATION}"
+        call_is 1 copy --multi-arch all --digestfile "<digestfile>" --policy "<policy>" \
+        --src-tls-verify=true --dest-tls-verify=true -- "${SOURCE}" "${DESTINATION}"
     check "copy's policy accepts any image" file_is "${WORK}/policies/1" '{"default":[{"type":"insecureAcceptAnything"}]}'
     check "copy says the policy accepts any image" output_has "Signature policy: none on this executor"
 fi
+cp "${WORK}/policy.json" "${WORK}/home/.config/containers/policy.json"
 
 run copy.sh SKOPEO_COPY_DIGEST="sha512:$(printf 'image' | sha512sum | awk '{ print $1 }')"
 check "copy accepts a sha512 digest" rc_is_zero
@@ -285,9 +293,9 @@ DEFAULTS=(PARAM_IMAGE="${IMAGE}" PARAM_RAW="0" PARAM_CONFIG="0" PARAM_NO_TAGS="0
 
 run inspect.sh
 check "inspect succeeds" rc_is_zero
-check "inspect reads the manifest first" call_is 1 inspect --raw -- "${IMAGE}"
+check "inspect reads the manifest first, requiring TLS" call_is 1 inspect --raw --tls-verify=true -- "${IMAGE}"
 check "inspect takes the digest of that manifest" call_is 2 manifest-digest -- "<manifest>"
-check "inspect reads the rest for that digest" call_is 3 inspect -- "${PINNED}"
+check "inspect reads the rest for that digest" call_is 3 inspect --tls-verify=true -- "${PINNED}"
 check "inspect prints the output" output_has "\"Name\": \"${PINNED}\""
 check "inspect exports the digest" exported SKOPEO_DIGEST "${DIGEST}"
 
@@ -297,10 +305,10 @@ check "inspect with raw needs no second inspect" calls_are 2
 check "inspect with raw prints the manifest" output_has '{"schemaVersion":2,"manifests":[]}'
 
 run inspect.sh PARAM_CONFIG="1" PARAM_NO_TAGS="1"
-check "inspect with config reads the configuration, which lists no tags" call_is 3 inspect --config -- "${PINNED}"
+check "inspect with config reads the configuration, which lists no tags" call_is 3 inspect --config --tls-verify=true -- "${PINNED}"
 
 run inspect.sh PARAM_RAW="1" PARAM_CONFIG="1"
-check "inspect with raw and config reads the configuration as stored" call_is 3 inspect --raw --config -- "${PINNED}"
+check "inspect with raw and config reads the configuration as stored" call_is 3 inspect --raw --config --tls-verify=true -- "${PINNED}"
 
 run inspect.sh PARAM_NO_TAGS="1" PARAM_TLS_VERIFY="0" PARAM_EXTRA_ARGS="--override-arch arm64" \
     PARAM_DIGEST_ENV_VAR="APP_DIGEST"
@@ -320,7 +328,7 @@ for pair in \
     "docker://ghcr.io/a/b:1@sha256:0000|docker://ghcr.io/a/b@${DIGEST}" \
     "oci:/tmp/layout:1.0|oci:/tmp/layout:1.0"; do
     run inspect.sh PARAM_IMAGE="${pair%%|*}"
-    check "inspect reads ${pair%%|*} as ${pair#*|}" call_is 3 inspect -- "${pair#*|}"
+    check "inspect reads ${pair%%|*} as ${pair#*|}" call_is 3 inspect --tls-verify=true -- "${pair#*|}"
 done
 
 run inspect.sh PARAM_OUTPUT_FILE="~/out/inspect.json"
@@ -364,7 +372,7 @@ DEFAULTS=(PARAM_REPOSITORY="${REPOSITORY}" PARAM_TLS_VERIFY="1" PARAM_TAGS_FILE=
 
 run list_tags.sh
 check "list_tags succeeds" rc_is_zero
-check "list_tags lists the repository's tags, with no optional flags" call_is 1 list-tags -- "${REPOSITORY}"
+check "list_tags lists the repository's tags, requiring TLS" call_is 1 list-tags --tls-verify=true -- "${REPOSITORY}"
 check "list_tags prints the tags" output_has '"latest"'
 
 run list_tags.sh PARAM_TLS_VERIFY="0" PARAM_EXTRA_ARGS="--retry-times 2" PARAM_TAGS_FILE="~/tags/all.txt"
@@ -384,6 +392,9 @@ check "list_tags writes an empty tags_file for it" file_is "${WORK}/job/tags.txt
 run list_tags.sh PARAM_TAGS_FILE="tags.txt" SKOPEO_LIST_OUTPUT=$'{\n    "Repository": "r",\n    "Tags": null\n}'
 check "list_tags reads a null tag list as no tags" file_is "${WORK}/job/tags.txt" ""
 
+run list_tags.sh PARAM_TAGS_FILE="tags.txt" SKOPEO_LIST_OUTPUT=$'{\n "Repository": "r",\n "Tags": [\n  "a",\n  "b"\n ]\n}'
+check "list_tags reads tags indented another way" file_is "${WORK}/job/tags.txt" $'a\nb'
+
 run list_tags.sh PARAM_TAGS_FILE="bad.txt" SKOPEO_LIST_OUTPUT=$'{\n    "Repository": "r",\n    "Tags": [\n        "ok",\n        "not a tag"\n    ]\n}'
 check "list_tags refuses a list it can't read" rc_is_nonzero
 check "list_tags says it could not read the tags" output_has "ERROR: Could not read the tags"
@@ -394,7 +405,7 @@ check "list_tags refuses tags_file for an archive" rc_is_nonzero
 check "list_tags says tags_file needs a registry" output_has "ERROR: tags_file needs a registry repository"
 
 run list_tags.sh PARAM_REPOSITORY="docker-archive:app.tar"
-check "list_tags lists an archive without tags_file" call_is 1 list-tags -- "docker-archive:app.tar"
+check "list_tags lists an archive without tags_file" call_is 1 list-tags --tls-verify=true -- "docker-archive:app.tar"
 
 run list_tags.sh PARAM_TAGS_FILE="~/tags.txt" HOME=""
 check "list_tags refuses tags_file under ~/ without HOME" rc_is_nonzero

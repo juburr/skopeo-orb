@@ -37,10 +37,9 @@ skopeo_require
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "${WORK_DIR}"' EXIT
 
-LIST_ARGS=(list-tags)
-if [[ "${TLS_VERIFY}" == false ]]; then
-    LIST_ARGS+=(--tls-verify=false)
-fi
+# --tls-verify is passed even when true, so a registries.conf that marks the
+# registry insecure can't relax it.
+LIST_ARGS=(list-tags --tls-verify="${TLS_VERIFY}")
 # The array can be empty, and bash before 4.4 treats an empty array as unset
 # under set -u, so it is expanded only when it has elements.
 LIST_ARGS+=(${EXTRA_ARG_LIST[@]+"${EXTRA_ARG_LIST[@]}"})
@@ -55,15 +54,16 @@ echo
 if [[ -n "${TAGS_FILE}" ]]; then
     # skopeo prints the tags one per line, indented, inside "Tags": [ ... ].
     # A tag can't hold a quote or a backslash, so no JSON escape needs undoing,
-    # and anything else in the list is refused rather than written.
+    # and anything else in the list is refused rather than written. The
+    # indentation isn't relied on.
     if ! awk '
-        /^    "Tags": (\[\]|null)/ { in_tags = 0; seen = 1; next }
-        /^    "Tags": \[/ { in_tags = 1; seen = 1; next }
-        in_tags && /^    \]/ { in_tags = 0; next }
+        /^[ \t]*"Tags": (\[\]|null)/ { in_tags = 0; seen = 1; next }
+        /^[ \t]*"Tags": \[/ { in_tags = 1; seen = 1; next }
+        in_tags && /^[ \t]*\]/ { in_tags = 0; next }
         in_tags {
-            if (match($0, /^        "[A-Za-z0-9_][A-Za-z0-9_.-]*",?$/)) {
+            if (match($0, /^[ \t]*"[A-Za-z0-9_][A-Za-z0-9_.-]*",?$/)) {
                 line = $0
-                sub(/^        "/, "", line)
+                sub(/^[ \t]*"/, "", line)
                 sub(/",?$/, "", line)
                 print line
             } else {

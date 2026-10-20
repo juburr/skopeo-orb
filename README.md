@@ -209,7 +209,7 @@ skopeo requires HTTPS with a certificate that verifies, even for `localhost`. Fo
     dest_tls_verify: false
 ```
 
-Credentials sent to a registry over plain HTTP are not encrypted, so only do this for a registry on the same machine.
+Credentials sent to a registry over plain HTTP are not encrypted, so only do this for a registry on the same machine. The orb passes these settings to skopeo whether they are `true` or `false`, so a `registries.conf` on the runner that marks a registry insecure can't turn verification off behind the defaults.
 
 ## 🧰 Commands
 
@@ -249,7 +249,7 @@ Removes the credentials `login` stored, with `skopeo logout`. The step fails if 
 
 Copies an image with `skopeo copy`, and exports the digest of the image it wrote.
 
-skopeo checks every copy against a signature policy (`policy.json`), and refuses to copy without one. When the executor has none, as `cimg/base` doesn't, and `extra_args` names none, `copy` uses the one skopeo's distribution packages install by default, which accepts any image, and says so in the log. To require signatures, put a policy in `/etc/containers/policy.json` or `~/.config/containers/policy.json`, or pass `--policy <file>` in `extra_args`.
+skopeo checks every copy against a signature policy (`policy.json`), and refuses to copy without one. When the executor has none, as `cimg/base` doesn't, and `extra_args` names none, `copy` uses the one skopeo's distribution packages install by default, which accepts any image, and says so in the log. To require signatures, put a policy in `/etc/containers/policy.json` or `~/.config/containers/policy.json`, set `CONTAINERS_POLICY_JSON` to its path, or pass `--policy <file>` in `extra_args`.
 
 | Parameter | Default | Description |
 | --- | --- | --- |

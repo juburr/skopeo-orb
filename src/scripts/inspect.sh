@@ -51,10 +51,9 @@ skopeo_require
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "${WORK_DIR}"' EXIT
 
-COMMON_ARGS=()
-if [[ "${TLS_VERIFY}" == false ]]; then
-    COMMON_ARGS+=(--tls-verify=false)
-fi
+# Passed even when true, so a registries.conf that marks the registry
+# insecure can't relax it.
+COMMON_ARGS=(--tls-verify="${TLS_VERIFY}")
 # The array can be empty, and bash before 4.4 treats an empty array as unset
 # under set -u, so it is expanded only when it has elements.
 COMMON_ARGS+=(${EXTRA_ARG_LIST[@]+"${EXTRA_ARG_LIST[@]}"})

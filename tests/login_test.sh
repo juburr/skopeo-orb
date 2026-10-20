@@ -106,8 +106,8 @@ args_are() { [[ -f "${WORK}/skopeo-args" && "$(cat "${WORK}/skopeo-args")" == "$
 
 run_login
 check "logs in" rc_is_zero
-check "runs skopeo login with the username, the password on stdin, and Docker's config file" \
-    args_are login --username "${TEST_USERNAME}" --password-stdin \
+check "runs skopeo login with the username, the password on stdin, TLS required and Docker's config file" \
+    args_are login --username "${TEST_USERNAME}" --password-stdin --tls-verify=true \
     --compat-auth-file "${WORK}/home/.docker/config.json" -- "registry.example:5000"
 check "sends the password on stdin" stdin_is "${TEST_PASSWORD}"
 check "keeps the password off skopeo's command line" args_lack "s3cret"
@@ -134,12 +134,12 @@ check "does not run skopeo with a bad tls_verify" skopeo_not_run
 
 run_login DOCKER_CONFIG="${WORK}/docker"
 check "stores the credentials in the config file in DOCKER_CONFIG" \
-    args_are login --username "${TEST_USERNAME}" --password-stdin \
+    args_are login --username "${TEST_USERNAME}" --password-stdin --tls-verify=true \
     --compat-auth-file "${WORK}/docker/config.json" -- "registry.example:5000"
 
 run_login REGISTRY_AUTH_FILE="${WORK}/auth.json"
 check "leaves REGISTRY_AUTH_FILE to skopeo" \
-    args_are login --username "${TEST_USERNAME}" --password-stdin -- "registry.example:5000"
+    args_are login --username "${TEST_USERNAME}" --password-stdin --tls-verify=true -- "registry.example:5000"
 check "names the REGISTRY_AUTH_FILE it stores the credentials in" output_has "Credentials file: ${WORK}/auth.json"
 
 run_login HOME=""

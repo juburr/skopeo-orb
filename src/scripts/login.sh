@@ -48,10 +48,9 @@ echo "  Password: from ${PARAM_PASSWORD}"
 echo "  TLS verify: ${TLS_VERIFY}"
 skopeo_auth_args
 
-LOGIN_ARGS=(login --username "${USERNAME}" --password-stdin)
-if [[ "${TLS_VERIFY}" == false ]]; then
-    LOGIN_ARGS+=(--tls-verify=false)
-fi
+# --tls-verify is passed even when true, so a registries.conf that marks the
+# registry insecure can't relax it.
+LOGIN_ARGS=(login --username "${USERNAME}" --password-stdin --tls-verify="${TLS_VERIFY}")
 LOGIN_ARGS+=(${SKOPEO_AUTH_ARGS[@]+"${SKOPEO_AUTH_ARGS[@]}"})
 # After --, a registry that starts with "-" is not read as a flag.
 LOGIN_ARGS+=(-- "${REGISTRY}")

@@ -63,9 +63,14 @@ DIGEST="sha256:$(printf 'image' | sha256sum | awk '{ print $1 }')"
 # SKOPEO_COPY_DIGEST to copy's --digestfile, prints a manifest for
 # inspect --raw, SKOPEO_MANIFEST_DIGEST for manifest-digest, the image's name
 # for any other inspect, and SKOPEO_TAGS as list-tags does. SKOPEO_FAIL names
-# a subcommand that fails.
+# a subcommand that fails. skopeo --version, which is not recorded, reports
+# SKOPEO_VERSION.
 cat > "${WORK}/bin/skopeo" << EOF
 #!/bin/bash
+if [[ "\$1" == --version ]]; then
+    echo "skopeo version \${SKOPEO_VERSION:-1.24.1}"
+    exit 0
+fi
 n=\$(find "${WORK}/calls" -type f | wc -l)
 digestfile="" previous="" raw=false
 for arg in "\$@"; do
@@ -126,7 +131,7 @@ run() {
     shift
     rm -f "${WORK}/calls/"* "${WORK}/policies/"*
     : > "${WORK}/bash_env"
-    OUTPUT=$(cd "${WORK}/job" && env -u REGISTRY_AUTH_FILE -u DOCKER_CONFIG \
+    OUTPUT=$(cd "${WORK}/job" && env -u REGISTRY_AUTH_FILE -u DOCKER_CONFIG -u XDG_CONFIG_HOME -u CONTAINERS_POLICY_JSON \
         PATH="${WORK}/bin:${PATH}" \
         HOME="${WORK}/home" \
         BASH_ENV="${WORK}/bash_env" \
@@ -189,7 +194,7 @@ check "copy succeeds" rc_is_zero
 check "copy copies every platform, asks for the digest and requires TLS on both sides" \
     call_is 1 copy --multi-arch all --digestfile "<digestfile>" --src-tls-verify=true --dest-tls-verify=true \
     -- "${SOURCE}" "${DESTINATION}"
-check "copy uses the policy.json in HOME" output_has "Signature policy: the executor's policy.json"
+check "copy uses the policy.json in HOME" output_has "Signature policy: ${WORK}/home/.config/containers/policy.json"
 check "copy exports the digest skopeo wrote" exported SKOPEO_DIGEST "${DIGEST}"
 
 run copy.sh PARAM_MULTI_ARCH="system" PARAM_SRC_TLS_VERIFY="0" PARAM_DEST_TLS_VERIFY="0" \
@@ -215,6 +220,14 @@ run copy.sh PARAM_EXTRA_ARGS="--insecure-policy"
 check "copy adds no policy to --insecure-policy" \
     call_is 1 copy --multi-arch all --digestfile "<digestfile>" --src-tls-verify=true --dest-tls-verify=true \
     --insecure-policy -- "${SOURCE}" "${DESTINATION}"
+check "copy says --insecure-policy comes from extra_args" output_has "Signature policy: from extra_args"
+
+run copy.sh PARAM_EXTRA_ARGS="--insecure-policy=False --insecure-policy=1"
+check "copy takes the last --insecure-policy" output_has "Signature policy: from extra_args"
+
+run copy.sh PARAM_EXTRA_ARGS="--insecure-policy --insecure-policy=false"
+check "copy looks for a policy when --insecure-policy is false" \
+    output_has "Signature policy: ${WORK}/home/.config/containers/policy.json"
 
 # Older releases, such as 1.14.0, don't read CONTAINERS_POLICY_JSON, so copy passes it.
 run copy.sh CONTAINERS_POLICY_JSON="${WORK}/env-policy.json"
@@ -223,17 +236,43 @@ check "copy passes CONTAINERS_POLICY_JSON as --policy" \
     --src-tls-verify=true --dest-tls-verify=true -- "${SOURCE}" "${DESTINATION}"
 check "copy says the policy comes from CONTAINERS_POLICY_JSON" output_has "(CONTAINERS_POLICY_JSON)"
 
-rm -f "${WORK}/home/.config/containers/policy.json"
-if [[ -e /etc/containers/policy.json || -e /usr/share/containers/policy.json ]]; then
-    echo "skip: this machine has a system policy.json, so the copy without one was not checked"
-else
-    run copy.sh
-    check "copy without a policy succeeds" rc_is_zero
-    check "copy without a policy gives skopeo one" \
+# skopeo 1.23.0 and later read the user's policy from XDG_CONFIG_HOME when it
+# is set; earlier releases only from HOME.
+mkdir -p "${WORK}/xdg/containers" "${WORK}/xdg-empty"
+cp "${WORK}/policy.json" "${WORK}/xdg/containers/policy.json"
+run copy.sh XDG_CONFIG_HOME="${WORK}/xdg"
+check "copy uses the policy.json in XDG_CONFIG_HOME" output_has "Signature policy: ${WORK}/xdg/containers/policy.json"
+run copy.sh XDG_CONFIG_HOME="${WORK}/xdg" SKOPEO_VERSION="1.22.3"
+check "copy before 1.23.0 uses the policy.json in HOME, not XDG_CONFIG_HOME" \
+    output_has "Signature policy: ${WORK}/home/.config/containers/policy.json"
+
+# no_policy_run NAME [VAR=value ...]: runs copy.sh where skopeo finds no
+# policy and checks that copy gives it one that accepts any image.
+no_policy_run() {
+    local name=$1
+    shift
+    run copy.sh ${@+"$@"}
+    check "${name} succeeds" rc_is_zero
+    check "${name} gives skopeo a policy" \
         call_is 1 copy --multi-arch all --digestfile "<digestfile>" --policy "<policy>" \
         --src-tls-verify=true --dest-tls-verify=true -- "${SOURCE}" "${DESTINATION}"
-    check "copy's policy accepts any image" file_is "${WORK}/policies/1" '{"default":[{"type":"insecureAcceptAnything"}]}'
-    check "copy says the policy accepts any image" output_has "Signature policy: none on this executor"
+    check "${name}: the policy accepts any image" file_is "${WORK}/policies/1" '{"default":[{"type":"insecureAcceptAnything"}]}'
+    check "${name} says the policy accepts any image" output_has "Signature policy: none on this executor"
+}
+if [[ -e /etc/containers/policy.json || -e /usr/share/containers/policy.json ]]; then
+    echo "skip: this machine has a system policy.json, so the copies without one were not checked"
+else
+    no_policy_run "copy with XDG_CONFIG_HOME set and a policy in HOME only" XDG_CONFIG_HOME="${WORK}/xdg-empty"
+    rm -f "${WORK}/home/.config/containers/policy.json"
+    no_policy_run "copy before 1.23.0 with a policy in XDG_CONFIG_HOME only" \
+        XDG_CONFIG_HOME="${WORK}/xdg" SKOPEO_VERSION="1.22.3"
+    no_policy_run "copy without a policy"
+
+    run copy.sh PARAM_EXTRA_ARGS="--insecure-policy=false"
+    check "copy gives skopeo a policy with --insecure-policy=false and no policy" \
+        call_is 1 copy --multi-arch all --digestfile "<digestfile>" --policy "<policy>" \
+        --src-tls-verify=true --dest-tls-verify=true --insecure-policy=false -- "${SOURCE}" "${DESTINATION}"
+    check "copy says that policy accepts any image" output_has "Signature policy: none on this executor"
 fi
 cp "${WORK}/policy.json" "${WORK}/home/.config/containers/policy.json"
 

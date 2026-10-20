@@ -249,7 +249,7 @@ Removes the credentials `login` stored, with `skopeo logout`. The step fails if 
 
 Copies an image with `skopeo copy`, and exports the digest of the image it wrote.
 
-skopeo checks every copy against a signature policy (`policy.json`), and refuses to copy without one. When the executor has none, as `cimg/base` doesn't, and `extra_args` names none, `copy` uses the one skopeo's distribution packages install by default, which accepts any image, and says so in the log. To require signatures, put a policy in `/etc/containers/policy.json` or `~/.config/containers/policy.json`, set `CONTAINERS_POLICY_JSON` to its path, or pass `--policy <file>` in `extra_args`.
+skopeo checks every copy against a signature policy (`policy.json`), and refuses to copy without one. When the executor has none, as `cimg/base` doesn't, and `extra_args` names none, `copy` uses the one skopeo's distribution packages install by default, which accepts any image, and says so in the log. To require signatures, put a policy in `/etc/containers/policy.json` or `~/.config/containers/policy.json`, set `CONTAINERS_POLICY_JSON` to its path, or pass `--policy <file>` in `extra_args`. The log names the policy each copy uses.
 
 | Parameter | Default | Description |
 | --- | --- | --- |
@@ -334,6 +334,7 @@ Hosts to allow (HTTPS, port 443) when running on a locked-down, self-hosted runn
 | --- | --- | --- |
 | `dl.google.com` | `install`, when it builds | The Go release that builds skopeo |
 | `proxy.golang.org` | `install`, when it builds | skopeo's source and the Go modules it uses. A `GOPROXY` set in the job is used instead. |
+| `storage.googleapis.com` | `install`, when it builds | Where proxy.golang.org redirects the download of some modules (for example `github.com/klauspost/compress`, which skopeo uses) |
 | `sum.golang.org` | `install`, when it builds | Go's checksum database, which the source is checked against. A `GOSUMDB` set in the job is used instead. |
 | `circleci-tasks-prod.s3.us-east-1.amazonaws.com` | `install` with `caching: true` (the default), on CircleCI cloud with self-hosted runners | CircleCI's cache storage, used by the built-in `restore_cache` and `save_cache` steps (see the [runner FAQ](https://circleci.com/docs/guides/execution-runner/runner-faqs/#what-connectivity-is-required)). Set `caching: false` to avoid it. |
 

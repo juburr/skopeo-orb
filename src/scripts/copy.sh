@@ -38,24 +38,43 @@ esac
 skopeo_words extra_args "${EXTRA_ARGS}"
 EXTRA_ARG_LIST=(${SKOPEO_WORDS[@]+"${SKOPEO_WORDS[@]}"})
 POLICY_GIVEN=false
+INSECURE_POLICY=false
 for word in ${EXTRA_ARG_LIST[@]+"${EXTRA_ARG_LIST[@]}"}; do
     case "${word}" in
         --digestfile | --digestfile=*)
             echo "ERROR: extra_args can't set --digestfile: copy writes the digest to digest_env_var itself." >&2
             exit 1
             ;;
-        --policy | --policy=* | --insecure-policy | --insecure-policy=*) POLICY_GIVEN=true ;;
+        --policy | --policy=*) POLICY_GIVEN=true ;;
+        # skopeo reads the flag's value with Go's strconv.ParseBool, which
+        # takes these as false, and the last one given wins.
+        --insecure-policy=0 | --insecure-policy=[fF] | --insecure-policy=false | --insecure-policy=FALSE | --insecure-policy=False)
+            INSECURE_POLICY=false
+            ;;
+        --insecure-policy | --insecure-policy=*) INSECURE_POLICY=true ;;
     esac
 done
+if [[ "${INSECURE_POLICY}" == true ]]; then
+    POLICY_GIVEN=true
+fi
 skopeo_require
 
-# policy_found: succeeds if there is a policy.json where skopeo looks for one.
-policy_found() {
-    local file
-    for file in "${XDG_CONFIG_HOME:-${HOME:-/nonexistent}/.config}/containers/policy.json" \
-        "${HOME:-/nonexistent}/.config/containers/policy.json" \
-        /etc/containers/policy.json /usr/share/containers/policy.json; do
-        if [[ -f "${file}" ]]; then
+# policy_file: prints the policy.json skopeo would use, and fails if there is
+# none. Releases before 1.23.0 look in ~/.config/containers, then
+# /etc/containers; later ones in $XDG_CONFIG_HOME/containers (or
+# ~/.config/containers when it is unset), /etc/containers, then
+# /usr/share/containers.
+policy_file() {
+    local version file
+    local files=("${XDG_CONFIG_HOME:-${HOME:-/nonexistent}/.config}/containers/policy.json"
+        /etc/containers/policy.json /usr/share/containers/policy.json)
+    version=$(skopeo --version 2> /dev/null) || version=""
+    if [[ "${version}" =~ version\ 1\.([0-9]+)\. ]] && ((BASH_REMATCH[1] < 23)); then
+        files=("${HOME:-/nonexistent}/.config/containers/policy.json" /etc/containers/policy.json)
+    fi
+    for file in "${files[@]}"; do
+        if [[ -e "${file}" ]]; then
+            printf '%s\n' "${file}"
             return 0
         fi
     done
@@ -65,20 +84,19 @@ policy_found() {
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "${WORK_DIR}"' EXIT
 DIGEST_FILE="${WORK_DIR}/digest"
-POLICY_NOTE="the executor's policy.json"
-if [[ "${POLICY_GIVEN}" == true ]]; then
-    POLICY_NOTE="from extra_args"
-fi
+POLICY_NOTE="from extra_args"
 
 COPY_ARGS=(copy --multi-arch "${MULTI_ARCH}" --digestfile "${DIGEST_FILE}")
 if [[ "${POLICY_GIVEN}" == false && -n "${CONTAINERS_POLICY_JSON:-}" ]]; then
     # Only newer releases read CONTAINERS_POLICY_JSON themselves.
     COPY_ARGS+=(--policy "${CONTAINERS_POLICY_JSON}")
     POLICY_NOTE="${CONTAINERS_POLICY_JSON} (CONTAINERS_POLICY_JSON)"
-elif [[ "${POLICY_GIVEN}" == false ]] && ! policy_found; then
-    printf '{"default":[{"type":"insecureAcceptAnything"}]}\n' > "${WORK_DIR}/policy.json"
-    COPY_ARGS+=(--policy "${WORK_DIR}/policy.json")
-    POLICY_NOTE="none on this executor, so any image is accepted, as with containers-common's default policy.json"
+elif [[ "${POLICY_GIVEN}" == false ]]; then
+    if ! POLICY_NOTE=$(policy_file); then
+        printf '{"default":[{"type":"insecureAcceptAnything"}]}\n' > "${WORK_DIR}/policy.json"
+        COPY_ARGS+=(--policy "${WORK_DIR}/policy.json")
+        POLICY_NOTE="none on this executor, so any image is accepted, as with containers-common's default policy.json"
+    fi
 fi
 # Both settings are passed even when true, so a registries.conf that marks a
 # registry insecure can't relax them.

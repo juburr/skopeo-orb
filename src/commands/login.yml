@@ -1,0 +1,42 @@
+description: >
+  Logs in to a container registry with skopeo login, which checks the
+  credentials with the registry first, so on a registry that requires a
+  login, wrong ones fail this step. They are
+  stored in Docker's config file (~/.docker/config.json, or the directory in
+  DOCKER_CONFIG), where the orb's other commands and later skopeo, docker,
+  crane and oras commands read them, or in REGISTRY_AUTH_FILE when that is
+  set. Run logout when the job no longer needs them.
+parameters:
+  registry:
+    type: string
+    description: >
+      Registry host to log in to, with an optional port, such as ghcr.io or
+      localhost:5000. Environment variables are expanded.
+  username:
+    type: env_var_name
+    default: REGISTRY_USERNAME
+    description: >
+      Name of the environment variable holding the username.
+  password:
+    type: env_var_name
+    default: REGISTRY_PASSWORD
+    description: >
+      Name of the environment variable holding the password or token. It
+      reaches skopeo on stdin, never on its command line.
+  tls_verify:
+    type: boolean
+    default: true
+    description: >
+      Require HTTPS with a certificate that verifies. Set it to false only for
+      a registry without TLS, such as one on localhost: the password is then
+      sent unencrypted.
+steps:
+  - run:
+      name: skopeo Login
+      environment:
+        PARAM_PASSWORD: << parameters.password >>
+        PARAM_REGISTRY: << parameters.registry >>
+        PARAM_TLS_VERIFY: << parameters.tls_verify >>
+        PARAM_USERNAME: << parameters.username >>
+        SCRIPT_SKOPEO_LIB: << include(scripts/lib/skopeo.sh) >>
+      command: << include(scripts/login.sh) >>

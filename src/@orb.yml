@@ -1,0 +1,8 @@
+version: 2.1
+
+description: >
+  Simplifies installation and use of skopeo within CircleCI, used to copy, inspect and list container images in registries and local directories, without a Docker daemon.
+
+display:
+  home_url: "https://github.com/juburr/skopeo-orb"
+  source_url: "https://github.com/juburr/skopeo-orb"

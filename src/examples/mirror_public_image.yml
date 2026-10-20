@@ -1,0 +1,30 @@
+description: >
+  Mirror a public base image into your own registry, every platform at once,
+  so builds don't depend on the public registry's availability or pull
+  limits. The source needs no login; the destination does. Copy from the
+  registry that publishes the image, not a pull-through cache, which can be
+  missing the layers of platforms few people pull.
+
+usage:
+  version: 2.1
+  orbs:
+    skopeo: juburr/skopeo-orb@0.1.0
+  jobs:
+    mirror-base-image:
+      docker:
+        - image: cimg/base:current-22.04
+      steps:
+        - skopeo/install:
+            version: "1.24.1"
+        - skopeo/login:
+            registry: registry.example.com
+        - skopeo/copy:
+            source: docker://cgr.dev/chainguard/static:latest
+            destination: docker://registry.example.com/base-images/static:latest
+        - skopeo/logout:
+            registry: registry.example.com
+  workflows:
+    nightly-mirror:
+      jobs:
+        - mirror-base-image:
+            context: registry-credentials

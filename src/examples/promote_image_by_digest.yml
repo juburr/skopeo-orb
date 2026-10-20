@@ -1,0 +1,35 @@
+description: >
+  Promote a tested image to a release tag: inspect the staging tag to pin its
+  digest, then copy exactly that image, registry to registry and without a
+  Docker daemon. --preserve-digests fails the copy rather than write the
+  release under a different digest. Credentials come from the
+  REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables, for example
+  in a context.
+
+usage:
+  version: 2.1
+  orbs:
+    skopeo: juburr/skopeo-orb@0.1.0
+  jobs:
+    promote:
+      docker:
+        - image: cimg/base:current-22.04
+      steps:
+        - skopeo/install:
+            version: "1.24.1"
+        - skopeo/login:
+            registry: ghcr.io
+        - skopeo/inspect:
+            image: docker://ghcr.io/myorg/myapp:staging
+            no_tags: true
+        - skopeo/copy:
+            source: docker://ghcr.io/myorg/myapp@${SKOPEO_DIGEST}
+            destination: docker://ghcr.io/myorg/myapp:1.2.3
+            extra_args: --preserve-digests
+        - skopeo/logout:
+            registry: ghcr.io
+  workflows:
+    release:
+      jobs:
+        - promote:
+            context: registry-credentials

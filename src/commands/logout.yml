@@ -1,0 +1,18 @@
+description: >
+  Removes the credentials login stored for a registry, with skopeo logout. The
+  step fails if there are none for that registry, unless credentials for it
+  that the registry accepts are stored elsewhere, such as by docker login,
+  which skopeo then leaves in place.
+parameters:
+  registry:
+    type: string
+    description: >
+      Registry host to log out of, as given to login, such as ghcr.io.
+      Environment variables are expanded.
+steps:
+  - run:
+      name: skopeo Logout
+      environment:
+        PARAM_REGISTRY: << parameters.registry >>
+        SCRIPT_SKOPEO_LIB: << include(scripts/lib/skopeo.sh) >>
+      command: << include(scripts/logout.sh) >>

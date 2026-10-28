@@ -137,6 +137,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The runner downloads an action a composite action uses when that
+      # composite first runs, which for actions/cache is after
+      # codeload.github.com is blocked: only runner images whose own action
+      # cache holds this release could start install. A step that names an
+      # action has it downloaded when the job starts, whether or not it runs,
+      # and actions/cache/restore and actions/cache/save are one download.
+      - name: Download actions/cache while codeload.github.com is reachable
+        if: false
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: unused
+          key: unused
       - name: Block the download hosts
         run: |
           echo "127.0.0.1 dl.google.com go.dev proxy.golang.org sum.golang.org storage.googleapis.com github.com codeload.github.com" | sudo tee -a /etc/hosts

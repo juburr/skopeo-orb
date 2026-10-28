@@ -109,7 +109,7 @@ Add the orb, install skopeo, promote an image. Copy this into `.circleci/config.
 version: 2.1
 
 orbs:
-  skopeo: juburr/skopeo-orb@0.2.0
+  skopeo: juburr/skopeo-orb@0.2.1
 
 jobs:
   promote:
@@ -157,26 +157,26 @@ jobs:
   promote:
     runs-on: ubuntu-24.04
     steps:
-      - uses: juburr/skopeo-orb/actions/install@v0.2.0
+      - uses: juburr/skopeo-orb/actions/install@v0.2.1
         with:
           version: "1.24.1"
       # Reads the credentials from REGISTRY_USERNAME and REGISTRY_PASSWORD.
-      - uses: juburr/skopeo-orb/actions/login@v0.2.0
+      - uses: juburr/skopeo-orb/actions/login@v0.2.1
         env:
           REGISTRY_USERNAME: ${{ github.actor }}
           REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         with:
           registry: ghcr.io
-      - uses: juburr/skopeo-orb/actions/inspect@v0.2.0
+      - uses: juburr/skopeo-orb/actions/inspect@v0.2.1
         with:
           image: docker://ghcr.io/my-org/myapp:staging
           no_tags: true
-      - uses: juburr/skopeo-orb/actions/copy@v0.2.0
+      - uses: juburr/skopeo-orb/actions/copy@v0.2.1
         with:
           source: docker://ghcr.io/my-org/myapp@${{ env.SKOPEO_DIGEST }}
           destination: docker://ghcr.io/my-org/myapp:1.2.3
           extra_args: --preserve-digests
-      - uses: juburr/skopeo-orb/actions/logout@v0.2.0
+      - uses: juburr/skopeo-orb/actions/logout@v0.2.1
         if: always()
         with:
           registry: ghcr.io
@@ -341,16 +341,16 @@ Each of the orb's commands has a GitHub Action of the same name. The actions run
 
 | Action | Orb command |
 | --- | --- |
-| `juburr/skopeo-orb/actions/install@v0.2.0` | [`skopeo/install`](#skopeoinstall) |
-| `juburr/skopeo-orb/actions/login@v0.2.0` | [`skopeo/login`](#skopeologin) |
-| `juburr/skopeo-orb/actions/logout@v0.2.0` | [`skopeo/logout`](#skopeologout) |
-| `juburr/skopeo-orb/actions/copy@v0.2.0` | [`skopeo/copy`](#skopeocopy) |
-| `juburr/skopeo-orb/actions/inspect@v0.2.0` | [`skopeo/inspect`](#skopeoinspect) |
-| `juburr/skopeo-orb/actions/list_tags@v0.2.0` | [`skopeo/list_tags`](#skopeolist_tags) |
+| `juburr/skopeo-orb/actions/install@v0.2.1` | [`skopeo/install`](#skopeoinstall) |
+| `juburr/skopeo-orb/actions/login@v0.2.1` | [`skopeo/login`](#skopeologin) |
+| `juburr/skopeo-orb/actions/logout@v0.2.1` | [`skopeo/logout`](#skopeologout) |
+| `juburr/skopeo-orb/actions/copy@v0.2.1` | [`skopeo/copy`](#skopeocopy) |
+| `juburr/skopeo-orb/actions/inspect@v0.2.1` | [`skopeo/inspect`](#skopeoinspect) |
+| `juburr/skopeo-orb/actions/list_tags@v0.2.1` | [`skopeo/list_tags`](#skopeolist_tags) |
 
 How they differ from the orb's commands:
 
-- **Versions.** An action is referenced by the repository's release tag, such as `v0.2.0`, the same tag the orb is published from. There is no moving major tag yet. For the strongest pinning, use the tag's commit SHA: `juburr/skopeo-orb/actions/copy@<sha> # v0.2.0`.
+- **Versions.** An action is referenced by the repository's release tag, such as `v0.2.1`, the same tag the orb is published from. There is no moving major tag yet. For the strongest pinning, use the tag's commit SHA: `juburr/skopeo-orb/actions/copy@<sha> # v0.2.1`.
 - **Inputs are strings.** Write booleans quoted or not (`tls_verify: false` reaches the script as `false`); the scripts check every boolean and `multi_arch` themselves.
 - **Credentials.** `login`'s `username` and `password` name environment variables, as in the orb. Set them in the `env` of the step that uses `login`, from secrets, as in the [Quick Start](#github-actions). They reach the action's script and nothing else.
 - **Environment variables.** The orb expands `$NAME` in its parameters with the CircleCI CLI, which GitHub's runners don't have, so the actions take values as they are. Use GitHub's expressions instead, such as `destination: docker://ghcr.io/my-org/myapp:${{ github.sha }}`, or `${{ env.SKOPEO_DIGEST }}` for the digest an earlier step exported.

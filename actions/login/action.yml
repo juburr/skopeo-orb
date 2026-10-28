@@ -1,0 +1,48 @@
+name: Log in to a registry with skopeo
+description: >
+  Logs in to a container registry with skopeo login, which checks the
+  credentials with the registry first, so on a registry that requires a login,
+  wrong ones fail this step. They are stored in Docker's config file
+  (~/.docker/config.json, or the directory in DOCKER_CONFIG), where the orb's
+  other commands and later skopeo, docker, crane and oras commands read them, or
+  in REGISTRY_AUTH_FILE when that is set. Run logout when the job no longer
+  needs them. The GitHub Actions twin of the orb's login command.
+author: juburr
+
+inputs:
+  password:
+    description: >
+      Name of the environment variable holding the password or token. It reaches
+      skopeo on stdin, never on its command line. Set it in the env of the step
+      that uses this action, from a secret.
+    default: REGISTRY_PASSWORD
+  registry:
+    description: >
+      Registry host to log in to, with an optional port, such as ghcr.io or
+      localhost:5000.
+    required: true
+  tls_verify:
+    description: >
+      Require HTTPS with a certificate that verifies. Set it to false only for a
+      registry without TLS, such as one on localhost: the password is then sent
+      unencrypted.
+    default: "true"
+  username:
+    description: >
+      Name of the environment variable holding the username. Set it in the env
+      of the step that uses this action.
+    default: REGISTRY_USERNAME
+
+runs:
+  using: composite
+  steps:
+    - name: skopeo Login
+      shell: bash
+      env:
+        PARAM_PASSWORD: ${{ inputs.password }}
+        PARAM_REGISTRY: ${{ inputs.registry }}
+        PARAM_TLS_VERIFY: ${{ inputs.tls_verify }}
+        PARAM_USERNAME: ${{ inputs.username }}
+      run: >-
+        bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/scripts/login.sh"
+        "SCRIPT_SKOPEO_LIB=${GITHUB_ACTION_PATH}/../../src/scripts/lib/skopeo.sh"

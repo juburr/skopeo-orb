@@ -2,27 +2,29 @@
 
 <img src="assets/logos/skopeo-orb-512px.png" width="256" alt="Skopeo Orb logo: a cartoon eye ringed by orbiting shipping containers and database cylinders, above a planet's horizon and the word skopeo-orb, in a round dark badge">
 
-# Skopeo Orb for CircleCI
+# Skopeo for CircleCI and GitHub Actions
 
-### Copy, inspect and list container images across registries, straight from CircleCI.
+### Copy, inspect and list container images across registries, from CircleCI or GitHub Actions.
 
-Install a checksum-verified [skopeo](https://github.com/containers/skopeo) and work with images where they live:<br>
+Install a checksum-verified [skopeo](https://github.com/containers/skopeo) and work with images where they live, with orb commands or GitHub Actions:<br>
 promote a build between registries, mirror a base image, read a tag's digest, or check which tags exist.<br>
 No Docker daemon · Built from source, strict SHA-512 verification by default · No `sudo` · Passwords never on the command line
 
 [![CircleCI Build Status](https://circleci.com/gh/juburr/skopeo-orb.svg?style=shield "CircleCI Build Status")](https://circleci.com/gh/juburr/skopeo-orb)
+[![GitHub Actions Status](https://github.com/juburr/skopeo-orb/actions/workflows/actions.yml/badge.svg?branch=main "GitHub Actions Status")](https://github.com/juburr/skopeo-orb/actions/workflows/actions.yml)
 [![CircleCI Orb Version](https://badges.circleci.com/orbs/juburr/skopeo-orb.svg)](https://circleci.com/developer/orbs/orb/juburr/skopeo-orb)
 [![GitHub License](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
 [![CircleCI Community](https://img.shields.io/badge/community-CircleCI%20Discuss-343434.svg)](https://discuss.circleci.com/c/ecosystem/orbs)
 
+![CircleCI orb and GitHub Actions](https://img.shields.io/badge/CI-CircleCI%20%7C%20GitHub%20Actions-F97316?style=for-the-badge)
 ![skopeo 1.14+](https://img.shields.io/badge/skopeo-1.14%2B-7C3AED?style=for-the-badge)
 ![amd64 and arm64](https://img.shields.io/badge/arch-amd64%20%7C%20arm64-0EA5E9?style=for-the-badge&logo=linux&logoColor=white)
 ![SHA-512 verified by default](https://img.shields.io/badge/SHA--512-strict%20by%20default-16A34A?style=for-the-badge)
 ![No sudo required](https://img.shields.io/badge/sudo-not%20required-DB2777?style=for-the-badge)
 
-**[Quick Start](#-quick-start)** · **[Features](#-why-skopeo-orb)** · **[Recipes](#-recipes)** · **[Commands](#-commands)** · **[Security](#-secure-by-design)** · **[Network Access](#-network-access)**
+**[Quick Start](#-quick-start)** · **[Features](#-why-skopeo-orb)** · **[Recipes](#-recipes)** · **[Commands](#-commands)** · **[GitHub Actions](#-github-actions)** · **[Security](#-secure-by-design)** · **[Network Access](#-network-access)**
 
-<sub>An unofficial, community-maintained orb. [Contributions are welcome!](#-contributing)</sub>
+<sub>An unofficial, community-maintained CircleCI orb and set of GitHub Actions. [Contributions are welcome!](#-contributing)</sub>
 
 </div>
 
@@ -99,13 +101,15 @@ skopeo publishes source releases only. `skopeo/install` downloads a pinned Go re
 
 ## 🚀 Quick Start
 
+### CircleCI
+
 Add the orb, install skopeo, promote an image. Copy this into `.circleci/config.yml`:
 
 ```yaml
 version: 2.1
 
 orbs:
-  skopeo: juburr/skopeo-orb@0.1.0
+  skopeo: juburr/skopeo-orb@0.2.0
 
 jobs:
   promote:
@@ -137,6 +141,48 @@ workflows:
 Swap in your registry and repositories, put `REGISTRY_USERNAME` and `REGISTRY_PASSWORD` in the `registry-credentials` context (for GHCR, your GitHub username and a token that can write packages), and run it. `inspect` pins the staging tag to the image it points to right now, and `copy` writes exactly that image under the release tag. `--preserve-digests` makes the copy fail rather than write the release under a different digest. No step needs a Docker daemon, so this runs on a plain Docker executor.
 
 skopeo names images by transport: `docker://` for a registry, and `oci:`, `dir:` or `docker-archive:` for local images. Every image parameter needs one.
+
+### GitHub Actions
+
+```yaml
+name: Promote
+
+on: push
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: juburr/skopeo-orb/actions/install@v0.2.0
+        with:
+          version: "1.24.1"
+      # Reads the credentials from REGISTRY_USERNAME and REGISTRY_PASSWORD.
+      - uses: juburr/skopeo-orb/actions/login@v0.2.0
+        env:
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          registry: ghcr.io
+      - uses: juburr/skopeo-orb/actions/inspect@v0.2.0
+        with:
+          image: docker://ghcr.io/my-org/myapp:staging
+          no_tags: true
+      - uses: juburr/skopeo-orb/actions/copy@v0.2.0
+        with:
+          source: docker://ghcr.io/my-org/myapp@${{ env.SKOPEO_DIGEST }}
+          destination: docker://ghcr.io/my-org/myapp:1.2.3
+          extra_args: --preserve-digests
+      - uses: juburr/skopeo-orb/actions/logout@v0.2.0
+        if: always()
+        with:
+          registry: ghcr.io
+```
+
+The job's `GITHUB_TOKEN` can push to GHCR with `packages: write`. The digest `inspect` exports reaches later steps as `env.SKOPEO_DIGEST`. When the runner already has a skopeo, the install action puts the verified build ahead of it on the `PATH`. See [GitHub Actions](#-github-actions) for how the actions map to the orb's commands.
 
 > [!NOTE]
 > The first `install` of a skopeo version builds it, which takes a few minutes and about 1.5 GB of temporary disk space. With `caching` on (the default), later jobs restore the verified binary in seconds.
@@ -289,6 +335,33 @@ Lists a repository's tags with `skopeo list-tags`, and can write them to a file,
 
 String parameters expand environment variables, such as `${CIRCLE_SHA1}`. In `extra_args` that happens before the value is split, so quote a variable that may hold spaces.
 
+## ⚡ GitHub Actions
+
+Each of the orb's commands has a GitHub Action of the same name. The actions run the same scripts as the orb, so they do the same things the same way, and take the same inputs with the same defaults.
+
+| Action | Orb command |
+| --- | --- |
+| `juburr/skopeo-orb/actions/install@v0.2.0` | [`skopeo/install`](#skopeoinstall) |
+| `juburr/skopeo-orb/actions/login@v0.2.0` | [`skopeo/login`](#skopeologin) |
+| `juburr/skopeo-orb/actions/logout@v0.2.0` | [`skopeo/logout`](#skopeologout) |
+| `juburr/skopeo-orb/actions/copy@v0.2.0` | [`skopeo/copy`](#skopeocopy) |
+| `juburr/skopeo-orb/actions/inspect@v0.2.0` | [`skopeo/inspect`](#skopeoinspect) |
+| `juburr/skopeo-orb/actions/list_tags@v0.2.0` | [`skopeo/list_tags`](#skopeolist_tags) |
+
+How they differ from the orb's commands:
+
+- **Versions.** An action is referenced by the repository's release tag, such as `v0.2.0`, the same tag the orb is published from. There is no moving major tag yet. For the strongest pinning, use the tag's commit SHA: `juburr/skopeo-orb/actions/copy@<sha> # v0.2.0`.
+- **Inputs are strings.** Write booleans quoted or not (`tls_verify: false` reaches the script as `false`); the scripts check every boolean and `multi_arch` themselves.
+- **Credentials.** `login`'s `username` and `password` name environment variables, as in the orb. Set them in the `env` of the step that uses `login`, from secrets, as in the [Quick Start](#github-actions). They reach the action's script and nothing else.
+- **Environment variables.** The orb expands `$NAME` in its parameters with the CircleCI CLI, which GitHub's runners don't have, so the actions take values as they are. Use GitHub's expressions instead, such as `destination: docker://ghcr.io/my-org/myapp:${{ github.sha }}`, or `${{ env.SKOPEO_DIGEST }}` for the digest an earlier step exported.
+- **Signature policy.** On a runner that has containers-common's `policy.json` (from Ubuntu's skopeo, podman or buildah packages), `copy` uses it when `extra_args` names none, as skopeo itself would; without one, `copy` passes containers-common's default policy itself, as on the orb's executors.
+- **Caching.** `caching` stores the verified build with [`actions/cache`](https://github.com/actions/cache), with the same key ingredients as the orb. The cache is restored before the install and saved right after it, and what it restores is verified again, so only the first job builds. It counts toward the repository's GitHub Actions cache storage.
+- **`no_output_timeout`** is CircleCI's; a GitHub step has none, and a job's default `timeout-minutes` (360) leaves the build plenty of time.
+- **Exports.** What a command exports to later steps (the install path on the `PATH`, the digests `copy` and `inspect` export) is passed on through `GITHUB_PATH` and `GITHUB_ENV`.
+- **Runners.** CI builds skopeo on GitHub-hosted `ubuntu-24.04` and `ubuntu-24.04-arm` runners, installs it from the cache with every download host blocked, and runs every action against a registry that requires a login, under skopeo 1.14.0 and the default version, as on CircleCI.
+
+The actions are composite actions in [`actions/`](actions), next to the orb's source. Each passes its inputs to the orb's script as environment variables, never pasting them into a script, and [`actions/run_script.sh`](actions/run_script.sh) gives the script what CircleCI would: a `BASH_ENV` file for the values it hands to later steps, which it then passes on through `GITHUB_PATH` and `GITHUB_ENV`.
+
 ## 🔒 Secure by Design
 
 - **Least Privilege**: Installs to a user-owned directory by default, with no `sudo` usage anywhere in this orb, and needs no Docker daemon.
@@ -302,7 +375,7 @@ String parameters expand environment variables, such as `${CIRCLE_SHA1}`. In `ex
 
 ## 💻 Supported Platforms
 
-Linux executors on `x86_64` (amd64) and `aarch64`/`arm64` (arm64), including CircleCI [Arm resource classes](https://circleci.com/docs/using-arm/). The `install` command builds for the architecture reported by `uname -m` and, in the default `strict` mode, verifies the build against that architecture's SHA-512 checksum. Any other operating system or architecture fails the install rather than installing a binary that can't run. CI builds on `cimg/base` (Docker, amd64) and on an Arm machine executor, and runs every command against a registry that requires a login, under skopeo 1.14.0 and the default version.
+Linux executors on `x86_64` (amd64) and `aarch64`/`arm64` (arm64), including CircleCI [Arm resource classes](https://circleci.com/docs/using-arm/). The `install` command builds for the architecture reported by `uname -m` and, in the default `strict` mode, verifies the build against that architecture's SHA-512 checksum. Any other operating system or architecture fails the install rather than installing a binary that can't run. CI builds on `cimg/base` (Docker, amd64) and on an Arm machine executor, and runs every command against a registry that requires a login, under skopeo 1.14.0 and the default version. The GitHub Actions run on GitHub-hosted `ubuntu-24.04` and `ubuntu-24.04-arm` runners (see [GitHub Actions](#-github-actions)).
 
 `install` needs bash 4 or newer, `curl` or `wget`, `awk`, `tar`, `gzip`, and the standard coreutils, including `mktemp` and `sha512sum`, plus about 1.5 GB of free space in `TMPDIR` for a build. It downloads its own Go, so the executor needs none. CircleCI's `cimg` and machine images have all of them; on an image that lacks one, such as Red Hat UBI, install it in an earlier step (for example `microdnf install -y tar gzip`).
 
@@ -337,6 +410,7 @@ Hosts to allow (HTTPS, port 443) when running on a locked-down, self-hosted runn
 | `storage.googleapis.com` | `install`, when it builds | Where proxy.golang.org redirects the download of some modules (for example `github.com/klauspost/compress`, which skopeo uses) |
 | `sum.golang.org` | `install`, when it builds | Go's checksum database, which the source is checked against. A `GOSUMDB` set in the job is used instead. |
 | `circleci-tasks-prod.s3.us-east-1.amazonaws.com` | `install` with `caching: true` (the default), on CircleCI cloud with self-hosted runners | CircleCI's cache storage, used by the built-in `restore_cache` and `save_cache` steps (see the [runner FAQ](https://circleci.com/docs/guides/execution-runner/runner-faqs/#what-connectivity-is-required)). Set `caching: false` to avoid it. |
+| GitHub's cache storage | `install` with `caching: true`, through `actions/cache`, on self-hosted GitHub runners | The verified build (see GitHub's [self-hosted runner communication](https://docs.github.com/en/actions/reference/runners/self-hosted-runners#requirements-for-communication-with-github)). Set `caching: false` to avoid it. |
 
 A job behind a Go module proxy, such as Artifactory or Athens, can set `GOPROXY` (and `GOSUMDB`) for `install`: the build still has to match the orb's checksum, whatever proxy served the source. When `install` takes the binary from the cache, it contacts none of these hosts.
 
@@ -378,5 +452,5 @@ Need the logo for a slide deck, blog post, or internal developer portal? PNGs wi
   <br>
   <sub>Images move between registries, no daemon required. If this orb helps your team, a ⭐ helps others find it.</sub>
   <br>
-  <sub><a href="#skopeo-orb-for-circleci">Back to top ↑</a></sub>
+  <sub><a href="#skopeo-for-circleci-and-github-actions">Back to top ↑</a></sub>
 </div>

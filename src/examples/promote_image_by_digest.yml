@@ -9,7 +9,7 @@ description: >
 usage:
   version: 2.1
   orbs:
-    skopeo: juburr/skopeo-orb@0.1.0
+    skopeo: juburr/skopeo-orb@0.2.0
   jobs:
     promote:
       docker:

@@ -1,0 +1,74 @@
+name: Inspect an image with skopeo
+description: >
+  Inspects an image with skopeo inspect, without pulling it: its platform,
+  layers, labels and environment, its manifest (raw), or its configuration
+  (config). Prints the result, can save it to a file, and exports the digest of
+  the manifest the image name points to. The rest of the output is read for that
+  digest, so a tag that moves in between can't make the two disagree. The GitHub
+  Actions twin of the orb's inspect command.
+author: juburr
+
+inputs:
+  config:
+    description: >
+      Print the image's configuration (the OCI image config), in a normalized
+      form unless raw is also set.
+    default: "false"
+  digest_env_var:
+    description: >
+      Name of the environment variable to set, for later steps, to the digest of
+      the manifest the image name points to, such as sha256:4c1f…. For a
+      multi-platform image it is the index's.
+    default: SKOPEO_DIGEST
+  extra_args:
+    description: >
+      More arguments for skopeo inspect, split like shell words, such as
+      --override-arch arm64 to describe that platform of a multi-platform image.
+      Nothing in them is run as shell code. --format, --raw and --config are
+      refused, since they would change the manifest read; use raw, config, and
+      output_file with jq.
+    default: ""
+  image:
+    description: >
+      Image to inspect, named with its transport, such as
+      docker://ghcr.io/myorg/myapp:1.0.0.
+    required: true
+  no_tags:
+    description: >
+      Leave out the repository's tags (RepoTags), which skopeo otherwise lists
+      for a registry image. Listing them is slow for a repository with many
+      tags.
+    default: "false"
+  output_file:
+    description: >
+      Also save the output to this file, such as inspect.json. The directory is
+      created if needed. Environment variables and a leading ~/ are expanded.
+    default: ""
+  raw:
+    description: >
+      Print the manifest as the registry stores it. For a multi-platform image
+      that is the index. With config, print the configuration as stored instead.
+    default: "false"
+  tls_verify:
+    description: >
+      Require HTTPS with a certificate that verifies. Set it to false only for a
+      registry without TLS, such as one on localhost.
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: skopeo Inspect
+      shell: bash
+      env:
+        PARAM_CONFIG: ${{ inputs.config }}
+        PARAM_DIGEST_ENV_VAR: ${{ inputs.digest_env_var }}
+        PARAM_EXTRA_ARGS: ${{ inputs.extra_args }}
+        PARAM_IMAGE: ${{ inputs.image }}
+        PARAM_NO_TAGS: ${{ inputs.no_tags }}
+        PARAM_OUTPUT_FILE: ${{ inputs.output_file }}
+        PARAM_RAW: ${{ inputs.raw }}
+        PARAM_TLS_VERIFY: ${{ inputs.tls_verify }}
+      run: >-
+        bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/scripts/inspect.sh"
+        "SCRIPT_SKOPEO_LIB=${GITHUB_ACTION_PATH}/../../src/scripts/lib/skopeo.sh"

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is an unofficial CircleCI orb for skopeo, the containers project's CLI that copies, inspects and lists container images in registries and local directories, without a Docker daemon. The orb installs a checksum-verified skopeo and wraps its most used commands.
+This is an unofficial CircleCI orb, and set of GitHub Actions, for skopeo, the containers project's CLI that copies, inspects and lists container images in registries and local directories, without a Docker daemon. The orb installs a checksum-verified skopeo and wraps its most used commands.
 
 ## Development Commands
 
@@ -38,6 +38,7 @@ for t in tests/*_test.sh; do bash "$t" || break; done
 - `scripts/` - Shell implementations, one per command, included with `<< include(scripts/...) >>`
 - `scripts/lib/skopeo.sh` - Helpers shared by the command scripts. Each command passes it to its step as `SCRIPT_SKOPEO_LIB: << include(scripts/lib/skopeo.sh) >>`, and the script `eval`s it after checking it is set. It only defines functions and has no `set` line.
 - `examples/` - Usage examples, pinned to the orb's current version
+- `../actions/<command>/action.yml` - The GitHub Action for each command (see below)
 
 ### Key Implementation Details
 
@@ -84,10 +85,16 @@ The table starts at 1.14.0, the first release with `--compat-auth-file`, which `
 
 Every skopeo call ends its options with `--`, so a name that starts with `-` is never read as a flag. skopeo needs `--tls-verify=false` (or `--src-`/`--dest-tls-verify=false`) for a registry without TLS, even on localhost. The scripts pass the TLS settings whether true or false: an omitted flag falls back to `registries.conf`, which can mark a registry insecure. `list_tags` reads the tags whatever their indentation.
 
-### CI Pipeline (`.circleci/`)
+### GitHub Actions (`actions/`)
 
-- `config.yml` - Setup workflow: `test-install` (`tests/install_test.sh`, against a stand-in Go toolchain), `test-env-subst` (env subst and shell conventions), `test-commands` (`tests/login_test.sh` and `tests/commands_test.sh` against a stand-in skopeo), orb-tools lint, pack and review, shellcheck.
-- `test-deploy.yml`:
+Every command has a composite action of the same name in `actions/<command>/action.yml`, with inputs identical to the command's parameters (names and defaults). Each step passes inputs to the orb's script as `PARAM_*` environment variables, as the command does, and runs it with `bash "${GITHUB_ACTION_PATH}/../run_script.sh" SCRIPT SCRIPT_SKOPEO_LIB=<lib>`. Inputs never appear inside a `run:` script. `install` restores and saves `actions/cache` with the command's key ingredients (`no_output_timeout` is CircleCI's). `login`'s credentials come from the variables its inputs name, which a workflow sets in the `env` of the step that uses it. Every `uses:` is pinned to a commit SHA with its version in a comment.
+
+`actions/run_script.sh` and `tests/actions_test.sh` are identical in every juburr orb that ships actions; never edit them here alone. Keep the actions in sync with the command YAML by hand or with an equivalent generator, and quote any default a YAML 1.1 reader would take for a boolean or number: every input is a string. Without the CircleCI CLI, `skopeo_subst` uses values as they are, so the action descriptions leave out "Environment variables are expanded". `tests/actions_test.sh` checks all of this.
+
+### CI Pipeline
+
+- `.circleci/config.yml` - Setup workflow: `test-install` (`tests/install_test.sh`, against a stand-in Go toolchain), `test-env-subst` (env subst and shell conventions), `test-commands` (`tests/login_test.sh` and `tests/commands_test.sh` against a stand-in skopeo), `test-actions` (`tests/actions_test.sh`), orb-tools lint, pack and review, shellcheck.
+- `.circleci/test-deploy.yml`:
   - `command-test`: builds the default version on cimg/base, checks that a second install takes it from the cache, and copies a public image to an OCI layout there, which has no `policy.json`.
   - `checksum-test`: the unlisted 1.13.3 fails closed; `known_versions` builds it.
   - `arm64-test`: a native arm64 build must match the table entry cross-built on amd64, and a second install takes it from the cache.
@@ -101,6 +108,7 @@ Every skopeo call ends its options with `--`, so a name that starts with `-` is 
     - that the registry refuses skopeo after `logout`.
 
   Publishing runs on `v*` tags.
+- `.github/workflows/actions.yml` - The actions on GitHub's runners: `offline-tests`; `install` (a native build on amd64 and arm64, a second install from the cache, an unlisted version failing, then `command-test`'s copy to an OCI layout with the runner's `policy.json` moved aside); `install-from-cache` (Go's and the module proxy's hosts and github.com blocked); and `registry`, which mirrors `registry-test` (skopeo 1.14.0 and the default against a `registry:2` with htpasswd auth, started with `docker run`), with the wrong-password login run as an action that must fail.
 
 ## Linting
 

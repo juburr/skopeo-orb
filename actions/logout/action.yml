@@ -1,0 +1,25 @@
+name: Log out of a registry with skopeo
+description: >
+  Removes the credentials login stored for a registry, with skopeo logout. The
+  step fails if there are none for that registry, unless credentials for it that
+  the registry accepts are stored elsewhere, such as by docker login, which
+  skopeo then leaves in place. The GitHub Actions twin of the orb's logout
+  command.
+author: juburr
+
+inputs:
+  registry:
+    description: >
+      Registry host to log out of, as given to login, such as ghcr.io.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: skopeo Logout
+      shell: bash
+      env:
+        PARAM_REGISTRY: ${{ inputs.registry }}
+      run: >-
+        bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/scripts/logout.sh"
+        "SCRIPT_SKOPEO_LIB=${GITHUB_ACTION_PATH}/../../src/scripts/lib/skopeo.sh"

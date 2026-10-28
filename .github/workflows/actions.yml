@@ -1,0 +1,336 @@
+# Tests the GitHub Actions in actions/ on GitHub's own runners, as
+# .circleci/test-deploy.yml tests the orb's commands on CircleCI. Each job
+# runs the actions from this checkout (uses: ./actions/...), so a pull
+# request tests its own changes.
+name: GitHub Actions
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run the offline tests
+        run: |
+          for test in tests/*_test.sh; do
+            echo "=== ${test}"
+            bash "${test}"
+          done
+
+  # Builds the default release on both architectures. The checksum table
+  # was made by cross-compiling on amd64, so a native arm64 build that
+  # passes verification shows the build is the same on either host. Then
+  # test-deploy.yml's command-test: a copy to an OCI layout with no
+  # policy.json on the machine.
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # e_machine field of the ELF header: 3e00 is x86-64, b700 is aarch64.
+          # Quoted, since YAML reads an unquoted 3e00 as the number 3.
+          - runner: ubuntu-24.04
+            elf: "3e00"
+          - runner: ubuntu-24.04-arm
+            elf: "b700"
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./actions/install
+      - name: Verify the install
+        env:
+          ELF: ${{ matrix.elf }}
+        run: |
+          version=$(awk '/^  version:/ { found = 1 } found && /default:/ { gsub(/"/, "", $2); print $2; exit }' src/commands/install.yml)
+          # A skopeo the runner already has comes after the installed one.
+          type -a skopeo
+          [[ "$(command -v skopeo)" == "${HOME}/bin/skopeo" ]]
+          od -An -tx1 -j18 -N2 "${HOME}/bin/skopeo" | tr -d ' \n' | grep -Fx "${ELF}"
+          echo "Expected ${version}, installed $(skopeo --version)"
+          [[ "$(skopeo --version)" == "skopeo version ${version}" ]]
+      # The first install cached the verified binary, so this one takes it
+      # from the cache instead of building. It goes to a directory of its
+      # own, which later steps find first on the PATH.
+      - uses: ./actions/install
+        with:
+          install_path: ${{ runner.temp }}/second
+      - name: Verify the second install comes first on the PATH
+        env:
+          SECOND: ${{ runner.temp }}/second
+        run: |
+          [[ "$(command -v skopeo)" == "${SECOND}/skopeo" ]]
+          cmp "${SECOND}/skopeo" "${HOME}/bin/skopeo"
+          skopeo --version
+      # A real release the checksum table doesn't list.
+      - name: Install an unlisted version, which must fail
+        id: unlisted
+        continue-on-error: true
+        uses: ./actions/install
+        with:
+          version: 1.13.3
+          caching: false
+          install_path: ${{ runner.temp }}/unlisted
+      - name: Verify it failed before building anything
+        env:
+          OUTCOME: ${{ steps.unlisted.outcome }}
+          UNLISTED: ${{ runner.temp }}/unlisted
+        run: |
+          [[ "${OUTCOME}" == failure ]]
+          [[ ! -e "${UNLISTED}/skopeo" ]]
+      # A runner with Ubuntu's skopeo, podman or buildah packages has
+      # containers-common's policy.json. Without one, copy passes the
+      # default policy itself, as on cimg/base, which is what this tests.
+      - name: Take the runner's policy.json away
+        run: |
+          for file in /etc/containers/policy.json /usr/share/containers/policy.json; do
+            if [[ -e "${file}" ]]; then
+              echo "Moving ${file} aside."
+              sudo mv "${file}" "${file}.hidden"
+            fi
+          done
+      - uses: ./actions/copy
+        with:
+          source: docker://cgr.dev/chainguard/static:latest
+          destination: oci:${{ runner.temp }}/static-layout:latest
+      - uses: ./actions/inspect
+        with:
+          image: oci:${{ runner.temp }}/static-layout:latest
+          raw: true
+          digest_env_var: LAYOUT_DIGEST
+      - name: Verify the copy to an OCI layout
+        env:
+          LAYOUT: ${{ runner.temp }}/static-layout
+        run: |
+          echo "SKOPEO_DIGEST=${SKOPEO_DIGEST} LAYOUT_DIGEST=${LAYOUT_DIGEST}"
+          [[ "${LAYOUT_DIGEST}" == "${SKOPEO_DIGEST}" ]]
+          [[ "$(jq -r '.manifests | length' "${LAYOUT}/index.json")" == "1" ]]
+
+  # A fresh runner with every host the install downloads from blocked takes
+  # the verified binary from the cache the install job saved, which only
+  # works if the cache is used: a build would need Go's release and the
+  # module proxy.
+  install-from-cache:
+    needs: install
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Block the download hosts
+        run: |
+          echo "127.0.0.1 dl.google.com go.dev proxy.golang.org sum.golang.org storage.googleapis.com github.com codeload.github.com" | sudo tee -a /etc/hosts
+          for url in https://dl.google.com https://proxy.golang.org; do
+            if curl -sSf --max-time 10 -o /dev/null "${url}"; then
+              echo "${url} is still reachable."
+              exit 1
+            fi
+          done
+      - uses: ./actions/install
+      - name: Verify the install
+        run: |
+          version=$(awk '/^  version:/ { found = 1 } found && /default:/ { gsub(/"/, "", $2); print $2; exit }' src/commands/install.yml)
+          [[ "$(command -v skopeo)" == "${HOME}/bin/skopeo" ]]
+          [[ "$(skopeo --version)" == "skopeo version ${version}" ]]
+
+  # test-deploy.yml's registry-test: every action against a local registry:2
+  # that requires a login, for skopeo 1.14.0, the oldest release in the
+  # checksum table, and for the install action's default. It copies a
+  # multi-platform image from cgr.dev, pinned to its digest, whole and as
+  # one platform.
+  registry:
+    strategy:
+      fail-fast: false
+      matrix:
+        skopeo_version: ["1.14.0", "default"]
+    runs-on: ubuntu-24.04
+    env:
+      REGISTRY_HOST: localhost:5000
+      # Placeholder credentials for the throwaway registry. login reads them
+      # from the variables its username and password inputs name.
+      REGISTRY_USER: ci-user
+      REGISTRY_SECRET: ci-password
+      SOURCE_IMAGE: cgr.dev/chainguard/static:latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Start a registry that requires a login
+        run: |
+          # mirror.gcr.io serves the Docker Hub images without Docker Hub's
+          # anonymous pull limits. A pull from it can time out, so pull with
+          # retries before running them.
+          for image in mirror.gcr.io/library/httpd:2 mirror.gcr.io/library/registry:2; do
+            for attempt in 1 2 3; do
+              docker pull "${image}" && break
+              sleep $((attempt * 10))
+            done
+          done
+          mkdir -p "${RUNNER_TEMP}/registry-auth"
+          docker run --rm --entrypoint htpasswd mirror.gcr.io/library/httpd:2 -Bbn "${REGISTRY_USER}" "${REGISTRY_SECRET}" \
+            > "${RUNNER_TEMP}/registry-auth/htpasswd"
+          docker run -d --name registry -p 5000:5000 -v "${RUNNER_TEMP}/registry-auth:/auth" \
+            -e REGISTRY_AUTH=htpasswd -e REGISTRY_AUTH_HTPASSWD_REALM=skopeo-orb-ci \
+            -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd mirror.gcr.io/library/registry:2
+          # A 401 means the registry is up and refuses anonymous requests.
+          for _ in $(seq 1 30); do
+            if [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://${REGISTRY_HOST}/v2/")" == "401" ]]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "The registry did not start."
+          docker logs registry
+          exit 1
+      - if: matrix.skopeo_version == 'default'
+        uses: ./actions/install
+      - if: matrix.skopeo_version != 'default'
+        uses: ./actions/install
+        with:
+          version: ${{ matrix.skopeo_version }}
+      - name: Verify the skopeo version
+        env:
+          EXPECTED_VERSION: ${{ matrix.skopeo_version }}
+        run: |
+          if [[ "${EXPECTED_VERSION}" == "default" ]]; then
+            EXPECTED_VERSION=$(awk '/^  version:/ { found = 1 } found && /default:/ { gsub(/"/, "", $2); print $2; exit }' src/commands/install.yml)
+          fi
+          echo "Expected ${EXPECTED_VERSION}, installed $(skopeo --version)"
+          [[ "$(skopeo --version)" == "skopeo version ${EXPECTED_VERSION}" ]]
+          echo "SKOPEO_VERSION=${EXPECTED_VERSION}" >> "${GITHUB_ENV}"
+      - name: Read the source digests
+        run: |
+          # The tag can move while the job runs, so the rest of the job uses
+          # the image it points to now.
+          SOURCE_DIGEST=$(skopeo inspect --raw "docker://${SOURCE_IMAGE}" | skopeo manifest-digest /dev/stdin)
+          SOURCE_REF="docker://${SOURCE_IMAGE%:*}@${SOURCE_DIGEST}"
+          SOURCE_ARM64_DIGEST=$(skopeo inspect --raw "${SOURCE_REF}" \
+            | jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest')
+          echo "Source: ${SOURCE_REF}, linux/arm64: ${SOURCE_ARM64_DIGEST}"
+          [[ "${SOURCE_ARM64_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          {
+            echo "SOURCE_DIGEST=${SOURCE_DIGEST}"
+            echo "SOURCE_REF=${SOURCE_REF}"
+            echo "SOURCE_ARM64_DIGEST=${SOURCE_ARM64_DIGEST}"
+          } >> "${GITHUB_ENV}"
+      # skopeo checks the credentials with the registry at login.
+      - name: Log in with a wrong password, which must fail
+        id: wrong-password
+        continue-on-error: true
+        uses: ./actions/login
+        env:
+          WRONG_SECRET: not-the-password
+        with:
+          registry: localhost:5000
+          username: REGISTRY_USER
+          password: WRONG_SECRET
+          tls_verify: false
+      - name: Verify the wrong password was refused
+        env:
+          OUTCOME: ${{ steps.wrong-password.outcome }}
+        run: '[[ "${OUTCOME}" == failure ]]'
+      - uses: ./actions/login
+        with:
+          registry: localhost:5000
+          username: REGISTRY_USER
+          password: REGISTRY_SECRET
+          tls_verify: false
+      - uses: ./actions/copy
+        with:
+          source: ${{ env.SOURCE_REF }}
+          destination: docker://localhost:5000/skopeo-orb-ci/static:copied
+          dest_tls_verify: false
+      - name: Verify the copy
+        run: |
+          echo "SKOPEO_DIGEST=${SKOPEO_DIGEST}"
+          REGISTRY_DIGEST=$(curl -sS --fail -u "${REGISTRY_USER}:${REGISTRY_SECRET}" -o /dev/null -D - \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+            "http://${REGISTRY_HOST}/v2/skopeo-orb-ci/static/manifests/copied" \
+            | awk -F': ' 'tolower($1) == "docker-content-digest" { print $2 }' | tr -d '\r')
+          echo "Registry digest: ${REGISTRY_DIGEST}"
+          [[ "${REGISTRY_DIGEST}" == "${SKOPEO_DIGEST}" ]]
+          # skopeo 1.14.0 re-encodes an OCI index whose descriptors carry
+          # fields it doesn't know, which changes the index's digest; the
+          # default version keeps the source's.
+          if [[ "${SKOPEO_VERSION}" != "1.14.0" ]]; then
+            [[ "${SKOPEO_DIGEST}" == "${SOURCE_DIGEST}" ]]
+          fi
+          echo "COPIED_DIGEST=${SKOPEO_DIGEST}" >> "${GITHUB_ENV}"
+      - uses: ./actions/copy
+        with:
+          source: ${{ env.SOURCE_REF }}
+          destination: docker://localhost:5000/skopeo-orb-ci/static:arm64
+          multi_arch: system
+          dest_tls_verify: false
+          extra_args: --override-os linux --override-arch arm64
+          digest_env_var: ARM64_DIGEST
+      - name: Verify the single-platform copy, and that docker reads the stored login
+        run: |
+          echo "ARM64_DIGEST=${ARM64_DIGEST}"
+          [[ "${ARM64_DIGEST}" == "${SOURCE_ARM64_DIGEST}" ]]
+          # The registry refuses anonymous pulls, so this works only with the
+          # credentials login stored.
+          docker pull --platform linux/arm64 "${REGISTRY_HOST}/skopeo-orb-ci/static:arm64"
+      - uses: ./actions/inspect
+        with:
+          image: docker://localhost:5000/skopeo-orb-ci/static:copied
+          tls_verify: false
+          no_tags: true
+          output_file: ${{ runner.temp }}/skopeo-orb-ci/inspect.json
+          digest_env_var: INSPECT_DIGEST
+      - uses: ./actions/inspect
+        with:
+          image: docker://localhost:5000/skopeo-orb-ci/static:copied
+          raw: true
+          tls_verify: false
+          output_file: ${{ runner.temp }}/skopeo-orb-ci/manifest.json
+          digest_env_var: RAW_DIGEST
+      - name: Verify inspect
+        env:
+          OUT: ${{ runner.temp }}/skopeo-orb-ci
+        run: |
+          echo "INSPECT_DIGEST=${INSPECT_DIGEST} RAW_DIGEST=${RAW_DIGEST}"
+          [[ "${INSPECT_DIGEST}" == "${COPIED_DIGEST}" && "${RAW_DIGEST}" == "${COPIED_DIGEST}" ]]
+          [[ "$(jq -r .Digest "${OUT}/inspect.json")" == "${COPIED_DIGEST}" ]]
+          [[ "$(jq -r .Architecture "${OUT}/inspect.json")" == "amd64" ]]
+          [[ "$(jq -r .mediaType "${OUT}/manifest.json")" == "application/vnd.oci.image.index.v1+json" ]]
+      - uses: ./actions/list_tags
+        with:
+          repository: docker://localhost:5000/skopeo-orb-ci/static
+          tls_verify: false
+          tags_file: ${{ runner.temp }}/skopeo-orb-ci/tags.txt
+      - name: Verify list_tags
+        env:
+          OUT: ${{ runner.temp }}/skopeo-orb-ci
+        run: |
+          cat "${OUT}/tags.txt"
+          [[ "$(sort "${OUT}/tags.txt" | tr '\n' ' ')" == "arm64 copied " ]]
+      - uses: ./actions/logout
+        with:
+          registry: localhost:5000
+      - name: Verify the registry refuses skopeo after logout
+        run: |
+          if skopeo list-tags --tls-verify=false "docker://${REGISTRY_HOST}/skopeo-orb-ci/static"; then
+            echo "skopeo read the registry after logout."
+            exit 1
+          fi

@@ -1,0 +1,77 @@
+name: Copy an image with skopeo
+description: >
+  Copies an image with skopeo copy: registry to registry, or between a registry
+  and a local directory or archive, without a Docker daemon. Exports the digest
+  of the image written, for later steps. Log in to the registries first, unless
+  they allow anonymous access. skopeo checks the copy against a signature policy
+  (policy.json); when the executor has none, as cimg/base doesn't, and
+  extra_args names none, copy uses one that accepts any image, as skopeo's
+  distribution packages install by default. The GitHub Actions twin of the orb's
+  copy command.
+author: juburr
+
+inputs:
+  dest_tls_verify:
+    description: >
+      Require HTTPS with a certificate that verifies for the destination
+      registry. Set it to false only for a registry without TLS, such as one on
+      localhost.
+    default: "true"
+  destination:
+    description: >
+      Where to copy it, named the same way, such as
+      docker://registry.example.com/myapp:1.0.0.
+    required: true
+  digest_env_var:
+    description: >
+      Name of the environment variable to set, for later steps, to the digest of
+      the image written, such as sha256:4c1f…. For a multi-platform copy it is
+      the index's.
+    default: SKOPEO_DIGEST
+  extra_args:
+    description: >
+      More arguments for skopeo copy, split like shell words. Nothing in them is
+      run as shell code. --preserve-digests, for one, fails the step instead of
+      writing the image with a different digest, which older skopeo releases can
+      do to a multi-platform index. --policy <file> sets the signature policy,
+      as does a CONTAINERS_POLICY_JSON environment variable. --digestfile is
+      refused, since copy sets it.
+    default: ""
+  multi_arch:
+    description: >
+      What to copy of a multi-platform image. "all" (default here; skopeo's own
+      default is system) copies every platform and the index. "system" copies
+      only the platform of the machine running the job, or the one
+      --override-os/--override-arch in extra_args choose. "index-only" copies
+      the index alone. A docker-archive: or docker-daemon: destination holds one
+      platform, so set system for those.
+    default: all
+  source:
+    description: >
+      Image to copy, named with its transport:
+      docker://<registry>/<repository>:<tag> (or @<digest>) for a registry, or
+      oci:, dir:, docker-archive: and the other skopeo transports for local
+      images.
+    required: true
+  src_tls_verify:
+    description: >
+      Require HTTPS with a certificate that verifies for the source registry.
+      Set it to false only for a registry without TLS, such as one on localhost.
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: skopeo Copy
+      shell: bash
+      env:
+        PARAM_DESTINATION: ${{ inputs.destination }}
+        PARAM_DEST_TLS_VERIFY: ${{ inputs.dest_tls_verify }}
+        PARAM_DIGEST_ENV_VAR: ${{ inputs.digest_env_var }}
+        PARAM_EXTRA_ARGS: ${{ inputs.extra_args }}
+        PARAM_MULTI_ARCH: ${{ inputs.multi_arch }}
+        PARAM_SOURCE: ${{ inputs.source }}
+        PARAM_SRC_TLS_VERIFY: ${{ inputs.src_tls_verify }}
+      run: >-
+        bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/scripts/copy.sh"
+        "SCRIPT_SKOPEO_LIB=${GITHUB_ACTION_PATH}/../../src/scripts/lib/skopeo.sh"

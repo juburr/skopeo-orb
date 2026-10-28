@@ -1,0 +1,44 @@
+name: List a repository's tags with skopeo
+description: >
+  Lists the tags of a repository with skopeo list-tags. Prints them, and can
+  write them to a file, one per line, for later steps to search, such as with
+  grep -qx. The GitHub Actions twin of the orb's list_tags command.
+author: juburr
+
+inputs:
+  extra_args:
+    description: >
+      More arguments for skopeo list-tags, split like shell words. Nothing in
+      them is run as shell code.
+    default: ""
+  repository:
+    description: >
+      Repository to list, with its transport and without a tag, such as
+      docker://ghcr.io/myorg/myapp.
+    required: true
+  tags_file:
+    description: >
+      Also write the tags to this file, one per line, such as tags.txt. The
+      directory is created if needed. Environment variables and a leading ~/ are
+      expanded. Needs a docker:// repository: for an archive, skopeo lists
+      references, not tags.
+    default: ""
+  tls_verify:
+    description: >
+      Require HTTPS with a certificate that verifies. Set it to false only for a
+      registry without TLS, such as one on localhost.
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: skopeo List Tags
+      shell: bash
+      env:
+        PARAM_EXTRA_ARGS: ${{ inputs.extra_args }}
+        PARAM_REPOSITORY: ${{ inputs.repository }}
+        PARAM_TAGS_FILE: ${{ inputs.tags_file }}
+        PARAM_TLS_VERIFY: ${{ inputs.tls_verify }}
+      run: >-
+        bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/scripts/list_tags.sh"
+        "SCRIPT_SKOPEO_LIB=${GITHUB_ACTION_PATH}/../../src/scripts/lib/skopeo.sh"
